@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <time.h>
+#include <math.h>
 
 #include <X11/Xlib.h>
 #define GL_GLEXT_PROTOTYPES
@@ -17,7 +18,8 @@
 #include "render.h"
 
 void parse_arguments(int argc, char **argv, int *is_server);
-void rotate_data(int data[4]);
+int* create_data(size_t size);
+void rotate_data(int* data, size_t size);
 
 int main(int argc, char **argv)
 {
@@ -39,8 +41,11 @@ int main(int argc, char **argv)
     // Setup GL scene
     gl_setup_scene();
 
-    // Server texture data { red, greee, blue, white }
-    int texture_data[4] = {0x000000FF, 0x0000FF00, 0X00FF0000, 0x00FFFFFF};
+    // Server texture data
+    const size_t TEXTURE_DATA_WIDTH = 256;
+    const size_t TEXTURE_DATA_HEIGHT = TEXTURE_DATA_WIDTH;
+    const size_t TEXTURE_DATA_SIZE = TEXTURE_DATA_WIDTH * TEXTURE_DATA_HEIGHT;
+    int* texture_data = create_data(TEXTURE_DATA_SIZE);
 
     // -----------------------------
     // --- Texture sharing start ---
@@ -66,8 +71,8 @@ int main(int argc, char **argv)
         // GL: Create and populate the texture
         glGenTextures(1, &texture);
         glBindTexture(GL_TEXTURE_2D, texture);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 2, 2, GL_RGBA, GL_UNSIGNED_BYTE, texture_data);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, TEXTURE_DATA_WIDTH, TEXTURE_DATA_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TEXTURE_DATA_WIDTH, TEXTURE_DATA_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, texture_data);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
@@ -126,8 +131,8 @@ int main(int argc, char **argv)
         // EGL (extension: EGL_EXT_image_dma_buf_import): Create EGL image from file descriptor (texture_dmabuf_fd) and storage
         // data (texture_storage_metadata)
         EGLAttrib const attribute_list[] = {
-            EGL_WIDTH, 2,
-            EGL_HEIGHT, 2,
+            EGL_WIDTH, TEXTURE_DATA_WIDTH,
+            EGL_HEIGHT, TEXTURE_DATA_HEIGHT,
             EGL_LINUX_DRM_FOURCC_EXT, texture_storage_metadata.fourcc,
             EGL_DMA_BUF_PLANE0_FD_EXT, texture_dmabuf_fd,
             EGL_DMA_BUF_PLANE0_OFFSET_EXT, texture_storage_metadata.offset,
@@ -168,9 +173,9 @@ int main(int argc, char **argv)
             if (last_time < cur_time)
             {
                 last_time = cur_time;
-                rotate_data(texture_data);
+                rotate_data(texture_data, TEXTURE_DATA_SIZE);
                 glBindTexture(GL_TEXTURE_2D, texture);
-                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 2, 2, GL_RGBA, GL_UNSIGNED_BYTE, texture_data);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TEXTURE_DATA_WIDTH, TEXTURE_DATA_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, texture_data);
             }
         }
 
@@ -219,11 +224,58 @@ void parse_arguments(int argc, char **argv, int *is_server)
     }
 }
 
-void rotate_data(int data[4])
+int* create_data(size_t size)
 {
-    int temp = data[0];
-    data[0] = data[1];
-    data[1] = data[3];
-    data[3] = data[2];
-    data[2] = temp;
+    size_t edge = sqrt(size);
+    assert(edge * edge == size);
+    size_t half_edge = edge / 2;
+
+    int* data = malloc(size * sizeof(int));
+
+    // Paint the texture like so:
+    // RG
+    // BW
+    // where R - red, G - green, B - blue, W - white
+    int red = 0x000000FF;
+    int green = 0x0000FF00;
+    int blue = 0X00FF0000;
+    int white = 0x00FFFFFF;
+    for (size_t i = 0; i < size; i++) {
+        size_t x = i % edge;
+        size_t y = i / edge;
+
+        if (x < half_edge) {
+            if (y < half_edge) {
+                data[i] = red;
+            } else {
+                data[i] = blue;
+            }
+        } else {
+            if (y < half_edge) {
+                data[i] = green;
+            } else {
+                data[i] = white;
+            }
+        }
+    }
+
+    return data;
+}
+
+void rotate_data(int* data, size_t size)
+{
+    size_t edge = sqrt(size);
+    assert(edge * edge == size);
+    size_t half_edge = edge / 2;
+
+    for (size_t i = 0; i < half_edge * half_edge; i++) {
+        size_t x = i % half_edge;
+        size_t y = i / half_edge;
+
+        int temp = data[x + y * edge];
+        data[x + y * edge] = data[(x + half_edge) + y * edge];
+        data[(x + half_edge) + y * edge] = data[(x + half_edge) + (y + half_edge) * edge];
+        data[(x + half_edge) + (y + half_edge) * edge] = data[x + (y + half_edge) * edge];
+        data[x + (y + half_edge) * edge] = temp;
+    }
 }

@@ -58,8 +58,9 @@ int main(int argc, char **argv)
     struct texture_storage_metadata_t
     {
         int fourcc;
-        EGLint offset;
+        EGLuint64KHR modifiers;
         EGLint stride;
+        EGLint offset;
     };
 
     // GL texture that will be shared
@@ -89,18 +90,20 @@ int main(int argc, char **argv)
         // glFlush();
 
         // EGL (extension: EGL_MESA_image_dma_buf_export): Get file descriptor (texture_dmabuf_fd) for the EGL image and get its
-        // storage data (texture_storage_metadata - fourcc, stride, offset)
+        // storage data (texture_storage_metadata)
         int texture_dmabuf_fd;
         struct texture_storage_metadata_t texture_storage_metadata;
 
+        int num_planes;
         PFNEGLEXPORTDMABUFIMAGEQUERYMESAPROC eglExportDMABUFImageQueryMESA =
             (PFNEGLEXPORTDMABUFIMAGEQUERYMESAPROC)eglGetProcAddress("eglExportDMABUFImageQueryMESA");
         EGLBoolean queried = eglExportDMABUFImageQueryMESA(egl_display,
                                                            image,
                                                            &texture_storage_metadata.fourcc,
-                                                           NULL,
-                                                           NULL);
+                                                           &num_planes,
+                                                           &texture_storage_metadata.modifiers);
         assert(queried);
+        assert(num_planes == 1);
         PFNEGLEXPORTDMABUFIMAGEMESAPROC eglExportDMABUFImageMESA =
             (PFNEGLEXPORTDMABUFIMAGEMESAPROC)eglGetProcAddress("eglExportDMABUFImageMESA");
         EGLBoolean exported = eglExportDMABUFImageMESA(egl_display,
@@ -137,6 +140,8 @@ int main(int argc, char **argv)
             EGL_DMA_BUF_PLANE0_FD_EXT, texture_dmabuf_fd,
             EGL_DMA_BUF_PLANE0_OFFSET_EXT, texture_storage_metadata.offset,
             EGL_DMA_BUF_PLANE0_PITCH_EXT, texture_storage_metadata.stride,
+            EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT, (uint32_t)(texture_storage_metadata.modifiers & ((((uint64_t)1) << 33) - 1)),
+            EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT, (uint32_t)((texture_storage_metadata.modifiers>>32) & ((((uint64_t)1) << 33) - 1)),
             EGL_NONE};
         EGLImage image = eglCreateImage(egl_display,
                                         NULL,

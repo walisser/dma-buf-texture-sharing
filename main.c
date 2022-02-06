@@ -85,8 +85,8 @@ int main(int argc, char **argv)
         assert(image != EGL_NO_IMAGE);
         
         // The next line works around an issue in radeonsi driver (fixed in master at the time of writing). If you are
-        // not having problems with texture rendering until the first texture update you can omit this line
-        glFlush();
+        // having problems with texture rendering until the first texture update you can uncomment this line
+        // glFlush();
 
         // EGL (extension: EGL_MESA_image_dma_buf_export): Get file descriptor (texture_dmabuf_fd) for the EGL image and get its
         // storage data (texture_storage_metadata - fourcc, stride, offset)

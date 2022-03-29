@@ -6,6 +6,7 @@
 #include <GL/gl.h>
 #define EGL_EGLEXT_PROTOTYPES
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
 
 void initialize_egl(Display *x11_display, Window x11_window, EGLDisplay *egl_display, EGLContext *egl_context, EGLSurface *egl_surface)
 {
@@ -13,7 +14,7 @@ void initialize_egl(Display *x11_display, Window x11_window, EGLDisplay *egl_dis
     eglBindAPI(EGL_OPENGL_API);
 
     // get an EGL display connection
-    EGLDisplay display = eglGetDisplay(x11_display);
+	EGLDisplay display = eglGetPlatformDisplay(EGL_PLATFORM_X11_EXT, x11_display, 0);
 
     // initialize the EGL display connection
     eglInitialize(display, NULL, NULL);
@@ -33,7 +34,7 @@ void initialize_egl(Display *x11_display, Window x11_window, EGLDisplay *egl_dis
         EGL_CONTEXT_MAJOR_VERSION, 3,
         EGL_CONTEXT_MINOR_VERSION, 3,
         EGL_NONE};
-    EGLContext context = eglCreateContext(display, config, EGL_NO_CONTEXT, attrib_list);
+	EGLContext context = eglCreateContext(display, config, EGL_NO_CONTEXT, attrib_list);
 
     // create an EGL window surface
     EGLSurface surface = eglCreateWindowSurface(display, config, x11_window, NULL);

@@ -13,6 +13,8 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 
+#include "drm/drm_fourcc.h"
+
 #include "socket.h"
 #include "window.h"
 #include "render.h"
@@ -20,6 +22,31 @@
 void parse_arguments(int argc, char **argv, int *is_server);
 int* create_data(size_t size);
 void rotate_data(int* data, size_t size);
+
+#define CASE_STR( value ) case value: return #value; 
+const char* eglGetErrorString( EGLint error )
+{
+    switch( error )
+    {
+    CASE_STR( EGL_SUCCESS             )
+    CASE_STR( EGL_NOT_INITIALIZED     )
+    CASE_STR( EGL_BAD_ACCESS          )
+    CASE_STR( EGL_BAD_ALLOC           )
+    CASE_STR( EGL_BAD_ATTRIBUTE       )
+    CASE_STR( EGL_BAD_CONTEXT         )
+    CASE_STR( EGL_BAD_CONFIG          )
+    CASE_STR( EGL_BAD_CURRENT_SURFACE )
+    CASE_STR( EGL_BAD_DISPLAY         )
+    CASE_STR( EGL_BAD_SURFACE         )
+    CASE_STR( EGL_BAD_MATCH           )
+    CASE_STR( EGL_BAD_PARAMETER       )
+    CASE_STR( EGL_BAD_NATIVE_PIXMAP   )
+    CASE_STR( EGL_BAD_NATIVE_WINDOW   )
+    CASE_STR( EGL_CONTEXT_LOST        )
+    default: return "Unknown";
+    }
+}
+#undef CASE_STR
 
 int main(int argc, char **argv)
 {
@@ -38,14 +65,33 @@ int main(int argc, char **argv)
     EGLSurface egl_surface;
     initialize_egl(x11_display, x11_window, &egl_display, &egl_context, &egl_surface);
 
+	assert(eglGetCurrentContext());
+
+	printf("GL_VERSION=%s\n", glGetString(GL_VERSION));
+
     // Setup GL scene
     gl_setup_scene();
 
+
+    PFNEGLQUERYDMABUFFORMATSEXTPROC eglQueryDmaBufFormatsEXT =
+            (PFNEGLQUERYDMABUFFORMATSEXTPROC)eglGetProcAddress("eglQueryDmaBufFormatsEXT");
+
+    
+	EGLint formats[128];
+    EGLint num_formats = 0;
+    
+	EGLBoolean ok = eglQueryDmaBufFormatsEXT(egl_display, 128, formats, &num_formats);
+    assert(ok);
+	printf("eglQueryDmaBufFormatsEXT: ");
+    for (int i = 0; i < num_formats; ++i)
+		printf("%.4s ", (char*)&formats[i]);
+	printf("\n");
+                            
     // Server texture data
     const size_t TEXTURE_DATA_WIDTH = 256;
     const size_t TEXTURE_DATA_HEIGHT = TEXTURE_DATA_WIDTH;
     const size_t TEXTURE_DATA_SIZE = TEXTURE_DATA_WIDTH * TEXTURE_DATA_HEIGHT;
-    int* texture_data = create_data(TEXTURE_DATA_SIZE);
+	int* texture_data = create_data(TEXTURE_DATA_SIZE);
 
     // -----------------------------
     // --- Texture sharing start ---
@@ -74,8 +120,8 @@ int main(int argc, char **argv)
         glBindTexture(GL_TEXTURE_2D, texture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, TEXTURE_DATA_WIDTH, TEXTURE_DATA_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TEXTURE_DATA_WIDTH, TEXTURE_DATA_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, texture_data);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
         // EGL: Create EGL image from the GL texture
         EGLImage image = eglCreateImage(egl_display,
@@ -84,15 +130,16 @@ int main(int argc, char **argv)
                                         (EGLClientBuffer)(uint64_t)texture,
                                         NULL);
         assert(image != EGL_NO_IMAGE);
-        
+		printf("eglCreateImage: %s image=%p\n", eglGetErrorString(eglGetError()));
+
         // The next line works around an issue in radeonsi driver (fixed in master at the time of writing). If you are
         // having problems with texture rendering until the first texture update you can uncomment this line
         // glFlush();
 
         // EGL (extension: EGL_MESA_image_dma_buf_export): Get file descriptor (texture_dmabuf_fd) for the EGL image and get its
         // storage data (texture_storage_metadata)
-        int texture_dmabuf_fd;
-        struct texture_storage_metadata_t texture_storage_metadata;
+		int texture_dmabuf_fd = -1;
+		struct texture_storage_metadata_t texture_storage_metadata = { 'BAD ', 0xbadf00d, -2, -3 };
 
         int num_planes;
         PFNEGLEXPORTDMABUFIMAGEQUERYMESAPROC eglExportDMABUFImageQueryMESA =
@@ -101,16 +148,37 @@ int main(int argc, char **argv)
                                                            image,
                                                            &texture_storage_metadata.fourcc,
                                                            &num_planes,
-                                                           &texture_storage_metadata.modifiers);
+														   &texture_storage_metadata.modifiers);
+        
+
         assert(queried);
         assert(num_planes == 1);
         PFNEGLEXPORTDMABUFIMAGEMESAPROC eglExportDMABUFImageMESA =
             (PFNEGLEXPORTDMABUFIMAGEMESAPROC)eglGetProcAddress("eglExportDMABUFImageMESA");
+
+
+		printf("eglExportDMABUFImageQueryMESA: %s fourcc:%.4s planes:%d modifiers:0x%lx\n",
+			eglGetErrorString(eglGetError()),
+			(char*)&texture_storage_metadata.fourcc,
+			num_planes,
+			texture_storage_metadata.modifiers);
+
+		assert(texture_storage_metadata.fourcc == DRM_FORMAT_XBGR8888);
+		//assert(texture_storage_metadata.fourcc == DRM_FORMAT_ABGR8888);
+
         EGLBoolean exported = eglExportDMABUFImageMESA(egl_display,
                                                        image,
                                                        &texture_dmabuf_fd,
                                                        &texture_storage_metadata.stride,
                                                        &texture_storage_metadata.offset);
+
+		printf("eglExportDMABUFImageMESA: %s, ok=%d fd=%d, stride:%d offset:%d\n",
+			eglGetErrorString(eglGetError()),
+			exported,
+			texture_dmabuf_fd,
+			texture_storage_metadata.stride,
+			texture_storage_metadata.offset);
+
         assert(exported);
 
         // Unix Domain Socket: Send file descriptor (texture_dmabuf_fd) and texture storage data (texture_storage_metadata)
@@ -235,7 +303,8 @@ int* create_data(size_t size)
     assert(edge * edge == size);
     size_t half_edge = edge / 2;
 
-    int* data = malloc(size * sizeof(int));
+    assert(sizeof(int)==4);
+	int* data = malloc(size * sizeof(int));
 
     // Paint the texture like so:
     // RG
